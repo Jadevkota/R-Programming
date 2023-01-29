@@ -1,0 +1,312 @@
+---
+title: " Basics of Data management using R"
+author: "JDevkota"
+date: "2022-06-05"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=TRUE}
+
+rm(list=ls())
+
+#knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, tidy = FALSE)
+
+package_loader <- function(x, ...) {
+  if (x %in% rownames(installed.packages()) == FALSE) install.packages(x)
+  library(x, ...)
+}
+packages <- c("tidyverse", "lubridate" , "janitor", "httr", "knitr", "RCurl", "zoo", "openxlsx") # install/run the multiple libraries at once
+invisible(sapply(X = packages, FUN = package_loader, character.only = TRUE, warn.conflicts = FALSE))
+```
+
+
+```{r}
+# setwd("/path/to/my/directory") # If needed please set the working directory
+
+myfile <- getURL('https://covid.ourworldindata.org/data/owid-covid-data.csv', ssl.verifyhost=FALSE, ssl.verifypeer=FALSE) # Download data using URL 
+covid_data <- read.csv(textConnection(myfile), header=T) |>
+  mutate_all(na_if,"") |> # This function will update any empty cell with NA
+  clean_names() # make the variable names clean
+
+# covid_data <- read_csv('https://covid.ourworldindata.org/data/owid-covid-data.csv') # Another way to direct access online data source
+```
+
+
+```{r}
+dim(covid_data) # shows the dimension (Rows and Columns number) of the data frame 
+```
+
+```{r}
+head(covid_data, 5) # shows the first 5 row of the data frame
+```
+
+
+```{r}
+tail(covid_data, 5) # shows the last 5 row of the data frame
+```
+
+
+```{r}
+str(covid_data) # print all the variable names, type and data for review
+```
+
+
+# From the head and tail sub set of data it's clear that there are missing values (NA) in columns so lets see count the number of missing value in each column
+```{r}
+covid_data |>
+summarise_all(~sum(is.na(.))) # get number of NA in each column
+```
+
+```{r}
+covid_data |>
+  summarise_all(funs(100*mean(is.na(.)))) # get percentage of missing value in each column; sometimes it will be helpful if some columns have more that 90% NA we can drop thse variable
+```
+
+# Count the total observation of the each continents, it will also gives the count of the missing observations on the grouping variable
+```{r}
+covid_data |> 
+  group_by(continent) |>
+  summarize(Freq=n())
+```
+
+# count the total observation of the each country
+```{r}
+covid_data |> 
+  group_by(location) |>
+  summarize(Freq=n()) |>
+  arrange(desc(Freq)) # this will short/arrange the total frequency on descending order
+```
+
+
+# Continent variable have 14194 missing value check if we can Impute the missing from the two possible column location (Name of the country) & ISO-Code of the country.
+```{r}
+covid_data |>
+  filter(is.na(continent)) |> # Filter the rows with NA in continent
+  group_by(iso_code, location) |> # Group the two possible variable to update the continent 
+  summarize(Freq=n()) # Calculate frequency of all observation of the grouping variable
+```
+
+# From the above code line 73-79 does not suggest that we need to impute the missing variable on continent; so lets focus on the data which have country name (location) asn subset data; 
+```{r}
+covid_data <- covid_data |> 
+  drop_na(continent) # this will drop all the rows specifically missing value in the continent variable
+
+sum(is.na(covid_data$continent)) # check if any NA remains in that specific column
+
+# unique(covid_data$location) # check the name of the countries 
+```
+
+# Check for any duplicate rows in data
+```{r}
+covid_data |>
+  group_by_all() |>
+  filter(n() > 1) |> # filter any rows having more that repeated more that one
+  ungroup()
+```
+
+# Convert the the character date varaible in to the date
+```{r}
+covid_data <- covid_data |>
+  mutate(date = lubridate::ymd(date)) # this will convert character date in to the date variable
+```
+###############################################################################################
+### variables : Arranging, grouping, relocating, formating, creating new variable, renaming ### 
+###############################################################################################
+# create the new variable which will index the data reported day
+```{r}
+covid_data <- covid_data |>
+  arrange(location, date) |> # Arranging variables/Ordering Rows
+  group_by(location) |>
+  mutate(reported_day = row_number()) |> # this will create the new column/variable with the serial number of days reported separately for the each country 
+  relocate(reported_day, .after = date) |> # reported_day column will created at the end of the data frame so, relocate it and put just after date variable
+  mutate(year = format(as.Date(date, format="%Y-%m-%d"),"%Y")) |> # format the variable create new variable
+  relocate(year, .after = date) |>
+  mutate(year_month = format(as.Date(date, format="%Y-%m-%d"),"%Y-%m")) |> # New year_month variable is created
+  relocate(year_month, .after = year) |>
+  mutate(week_num = isoweek(ymd(date))) |> # New week variable is created
+  relocate(week_num, .after = year_month) |>
+  rename(country = location) # Renaming variable
+```
+
+
+# Let's filter data for only 3 countries ("United States", "United Kingdom", "Nepal"); this filtering is based on the values of specific column
+```{r}
+covid_data_us_uk_npl <- covid_data |>
+  filter(country %in% c("United States", "United Kingdom","Nepal")) 
+
+head(covid_data_us_uk_npl, 5)
+```
+
+```{r}
+covid_data_us_uk_npl |>
+  summarise_all(funs(100*mean(is.na(.))))
+```
+
+```{r}
+dim(covid_data_us_uk_npl) # check original Dimensions of the data frame
+
+covid_data_us_uk_npl <- covid_data_us_uk_npl |>
+  remove_empty(which = c("rows", "cols"), quiet = TRUE) # Two columns are empty so remove those from the data frame and any empty row will be removed
+
+dim(covid_data_us_uk_npl) # check the Dimensions after removing empty rows and columns
+```
+
+
+# Let's say I don't need the ISO-code and the continent name on this data frame so I will drop those two columns as well as i dont want to drop column which have missing value 90 % or more 
+
+```{r}
+covid_data_us_uk_npl <- covid_data_us_uk_npl |>
+  select(-c(iso_code, continent)) |> # select and use of negative operator drop selected column from data
+  select(where(~mean(is.na(.)) <= 0.9)) # any columns have missing values more than and equal to 90% were drop from the data base
+```
+
+# Lets check how may rows of infromations are for each country
+```{r}
+covid_data_us_uk_npl |>
+  group_by(country) |>
+  summarize(Freq=n())
+```
+
+##############################
+### Group-wise operations ###
+#############################
+# Summary statistics of specific vaiable with grouping varaible
+```{r}
+covid_data_us_uk_npl |>
+  group_by(country) |>
+  summarise(min_total_cases = min(total_cases, na.rm = T),
+  max_total_cases = max(total_cases, na.rm = T),
+  median_total_cases = median(total_cases, na.rm = T),
+  mean_total_cases = mean(total_cases, na.rm = T),
+  sd_total_cases = sd(total_cases, na.rm = T))
+```
+################################
+### Create you own function ###
+###############################
+```{r}
+# function_name <- function(argument)
+covid_mean <- function(x) {
+  min_max <- c(min(x), max(x)) # x is the input numeric vector
+  x <- x[! x %in% min_max]
+  mean(x) ## last line, so returned as output
+}
+
+# now use it!
+c(covid_mean(covid_data_us_uk_npl$total_cases), covid_mean(covid_data_us_uk_npl$new_cases),
+  covid_mean(covid_data_us_uk_npl$total_deaths), covid_mean(covid_data_us_uk_npl$new_tests))
+```
+
+# Let's see the daily difference between total cases and new cases
+```{r}
+covid_data_us_uk_npl |>
+  mutate(cases_difference = total_cases - new_cases) |> # mathematical operation to create new variable
+  relocate(cases_difference, .after = new_cases)
+```
+# Filtering the data of the specific country 
+```{r}
+covid_data_us <- covid_data_us_uk_npl |>
+  filter(country == "United States") |> # filter data of United States only
+  remove_empty(which = c("rows", "cols"), quiet = TRUE)
+```
+####################################
+### Use of conditional function ###
+####################################
+# Use of conditional function to create new variable and recode the existing variable
+```{r}
+covid_data_us |>
+  mutate(reported_status = ifelse(is.na(new_cases),
+                                  "Case not reported", "Case reported")) |>
+  relocate(reported_status, .after = new_cases) |>
+  group_by(reported_status) |>
+  summarize(Freq=n()) # gives the frequency table of reported status variable
+  
+```
+#########################################
+### Subsetting Both Columns and Rows ###
+########################################
+```{r}
+covid_data_us |>  
+  filter(new_cases < 10000 & year == 2020) |> # subset based on rows 
+  select(total_deaths, total_tests) |> # subset based on columns 
+  drop_na()
+```
+
+
+#####################################
+### Selecting specific variables ####
+#####################################
+```{r}
+covid_data_us_selected <- covid_data_us |>
+  select(c(1:8), total_deaths, new_deaths, icu_patients, hosp_patients, total_tests, new_tests) |> # select based on column index and columns name
+  remove_empty(which = c("rows", "cols"), quiet = TRUE)
+
+summary(covid_data_us_selected) # print the summary statistics 
+```
+
+# Imputing the missing variables, Last observation carried forward (LOCF) & backward for all NA in data frame. This may not be ideal methods to do imputation in this data set; it's only for demonistration purpose. Uncertain imputation for time-series forecasting
+```{r}
+covid_data_us_selected <- covid_data_us_selected |>
+  group_by(week_num) |>
+  mutate_all(funs(na.locf(., na.rm = FALSE))) |> # Last observation carried forward
+  mutate_all(funs(na.locf(., fromLast = TRUE, na.rm = FALSE))) # Last observation carried backward
+
+summary(covid_data_us_selected) # print the summary statistics in this output there are no NA's 
+```
+##########################
+### Subsetting Columns ###
+##########################
+# subset data using helpers functions 
+```{r}
+new_data <- covid_data_us_selected |>
+  select(country, date,  starts_with("new_")) # Use starts_with function it will pull all the variables name starts with new_ on new data frame
+####################################################
+new_data2 <- covid_data_us_selected |>
+  select(country, date, year, year_month, week_num, reported_day, contains("total_")) # Use contains function it will pull all the variables name which contains total_ in to the new data frame
+```
+################################################################
+### Merge/Mutating joins two data frame in to one dataframe ###
+###############################################################
+# lets merge the two data frame new_data, new_data2 
+```{r}
+# Checking variable name of the data frame to prepare for merging/joining two data frame 
+names(new_data)
+dim(new_data)
+names(new_data2)
+dim(new_data2)
+```
+# The mutating joins add columns from y to x, matching rows based on the keys
+```{r}
+merged_new_data <- left_join(new_data2, new_data, by = c("country", "date")) # Country and data are the keys variable 
+dim(merged_new_data) 
+```
+
+
+```{r}
+summary(merged_new_data) 
+```
+##########################################
+### Export the data set to Excel file #### 
+##########################################
+```{r}
+write.xlsx(merged_new_data, file = 'merged_new_data.xlsx') 
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
